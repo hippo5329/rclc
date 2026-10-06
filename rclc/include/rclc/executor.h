@@ -801,6 +801,9 @@ rclc_executor_spin_some(
   rclc_executor_t * executor,
   const uint64_t timeout_ns);
 
+/// rclc_executor_spin_all() is available (for code that also builds against an rclc without it)
+#define RCLC_EXECUTOR_HAS_SPIN_ALL 1
+
 /**
  *  Executes everything that is ready, pass after pass, until a pass finds nothing ready
  *  or max_duration_ns has elapsed -- the counterpart of rclcpp's Executor::spin_all().
