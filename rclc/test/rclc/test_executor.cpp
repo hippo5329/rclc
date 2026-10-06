@@ -1081,6 +1081,57 @@ TEST_F(TestDefaultExecutor, executor_spin_publisher_timer_cancelled) {
   rcutils_reset_error();
 }
 
+TEST_F(TestDefaultExecutor, executor_spin_all_drains_the_queue) {
+  // spin_some() takes one message per handle per call; spin_all() takes every queued one.
+  const unsigned int published = 5;   // within the default subscription depth (10)
+  rcl_ret_t rc;
+  rclc_executor_t executor;
+  rc = rclc_executor_init(&executor, &this->context, 10, this->allocator_ptr);
+  EXPECT_EQ(RCL_RET_OK, rc) << rcl_get_error_string().str;
+  _results_callback_counters_init();
+  rc = rclc_executor_add_subscription(
+    &executor, &this->sub1, &this->sub1_msg, &CALLBACK_1, ON_NEW_DATA);
+  EXPECT_EQ(RCL_RET_OK, rc) << rcl_get_error_string().str;
+
+  for (unsigned int i = 0; i < published; i++) {
+    rc = rcl_publish(&this->pub1, &this->pub1_msg, nullptr);
+    EXPECT_EQ(RCL_RET_OK, rc) << " pub1 not published";
+  }
+  bool success = false;
+  unsigned int tries;
+  _wait_for_msg(&this->sub1, &this->context, 100, 100000000, &tries, &success);
+  ASSERT_TRUE(success);
+  rclc_sleep_ms(200);   // the rest of the burst reaches the queue
+
+  rc = rclc_executor_spin_some(&executor, rclc_test_timeout_ns);
+  EXPECT_TRUE((RCL_RET_OK == rc) || (RCL_RET_TIMEOUT == rc)) << "spin_some error";
+  EXPECT_EQ(_cb1_cnt, 1u) << "spin_some takes one message per handle";
+
+  rc = rclc_executor_spin_all(&executor, RCL_MS_TO_NS(1000));
+  EXPECT_EQ(RCL_RET_OK, rc) << rcl_get_error_string().str;
+  EXPECT_EQ(_cb1_cnt, published) << "spin_all takes every queued message";
+
+  // nothing left: spin_all returns at once, executing nothing
+  rc = rclc_executor_spin_all(&executor, RCL_MS_TO_NS(1000));
+  EXPECT_EQ(RCL_RET_OK, rc) << rcl_get_error_string().str;
+  EXPECT_EQ(_cb1_cnt, published);
+
+  rc = rclc_executor_fini(&executor);
+  EXPECT_EQ(RCL_RET_OK, rc) << rcl_get_error_string().str;
+}
+
+TEST_F(TestDefaultExecutor, executor_spin_all_arguments) {
+  rclc_executor_t executor;
+  rcl_ret_t rc = rclc_executor_init(&executor, &this->context, 10, this->allocator_ptr);
+  EXPECT_EQ(RCL_RET_OK, rc) << rcl_get_error_string().str;
+  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, rclc_executor_spin_all(nullptr, RCL_MS_TO_NS(10)));
+  rcutils_reset_error();
+  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, rclc_executor_spin_all(&executor, 0));
+  rcutils_reset_error();
+  rc = rclc_executor_fini(&executor);
+  EXPECT_EQ(RCL_RET_OK, rc) << rcl_get_error_string().str;
+}
+
 TEST_F(TestDefaultExecutor, executor_spin_timer_cancelled) {
   rcl_ret_t rc;
   rclc_executor_t executor;

@@ -1804,8 +1804,13 @@ rclc_executor_prepare(rclc_executor_t * executor)
   return rc;
 }
 
+// One wait-and-execute pass: what rclc_executor_spin_some() does, also saying whether the
+// wait found anything ready (rcl_wait() returns RCL_RET_OK then, RCL_RET_TIMEOUT if not),
+// which rclc_executor_spin_all() needs and spin_some()'s own return value cannot tell.
+static
 rcl_ret_t
-rclc_executor_spin_some(rclc_executor_t * executor, const uint64_t timeout_ns)
+_rclc_executor_spin_some(
+  rclc_executor_t * executor, const uint64_t timeout_ns, bool * work_available)
 {
   rcl_ret_t rc = RCL_RET_OK;
   RCL_CHECK_ARGUMENT_FOR_NULL(executor, RCL_RET_INVALID_ARGUMENT);
@@ -1958,7 +1963,9 @@ rclc_executor_spin_some(rclc_executor_t * executor, const uint64_t timeout_ns)
   // wait up to 'timeout_ns' to receive notification about which handles reveived
   // new data from DDS queue.
   rc = rcl_wait(&executor->wait_set, timeout_ns);
-  RCLC_UNUSED(rc);
+  if (NULL != work_available) {
+    *work_available = (RCL_RET_OK == rc);
+  }
 
   // based on semantics process input data
   switch (executor->data_comm_semantics) {
@@ -1974,6 +1981,46 @@ rclc_executor_spin_some(rclc_executor_t * executor, const uint64_t timeout_ns)
   }
 
   return rc;
+}
+
+rcl_ret_t
+rclc_executor_spin_some(rclc_executor_t * executor, const uint64_t timeout_ns)
+{
+  return _rclc_executor_spin_some(executor, timeout_ns, NULL);
+}
+
+rcl_ret_t
+rclc_executor_spin_all(rclc_executor_t * executor, const uint64_t max_duration_ns)
+{
+  RCL_CHECK_ARGUMENT_FOR_NULL(executor, RCL_RET_INVALID_ARGUMENT);
+  RCUTILS_LOG_DEBUG_NAMED(ROS_PACKAGE_NAME, "spin_all");
+  if (0 == max_duration_ns) {
+    RCL_SET_ERROR_MSG("max_duration_ns must be greater than 0");
+    return RCL_RET_INVALID_ARGUMENT;
+  }
+  rcutils_time_point_value_t start;
+  rcutils_time_point_value_t now;
+  rcl_ret_t rc = rcutils_steady_time_now(&start);
+  if (RCUTILS_RET_OK != rc) {
+    return RCL_RET_ERROR;
+  }
+  // Pass after pass without waiting, until a pass finds nothing ready or the time is up.
+  // Each pass takes one message per ready handle, so a subscription with a queue behind it
+  // is drained in as many passes as it holds -- what one spin_some() call cannot do.
+  bool work_available = true;
+  while (work_available) {
+    rc = _rclc_executor_spin_some(executor, 0, &work_available);
+    if (!((RCL_RET_OK == rc) || (RCL_RET_TIMEOUT == rc))) {
+      return rc;
+    }
+    if (RCUTILS_RET_OK != rcutils_steady_time_now(&now)) {
+      return RCL_RET_ERROR;
+    }
+    if ((uint64_t)(now - start) >= max_duration_ns) {
+      break;
+    }
+  }
+  return RCL_RET_OK;
 }
 
 rcl_ret_t

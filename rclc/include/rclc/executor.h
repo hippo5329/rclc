@@ -802,6 +802,36 @@ rclc_executor_spin_some(
   const uint64_t timeout_ns);
 
 /**
+ *  Executes everything that is ready, pass after pass, until a pass finds nothing ready
+ *  or max_duration_ns has elapsed -- the counterpart of rclcpp's Executor::spin_all().
+ *
+ *  rclc_executor_spin_some() takes at most one message per handle per call, so a loop that
+ *  calls it once per iteration falls behind any subscription that receives faster than the
+ *  loop runs, and the middleware drops the rest of its queue. spin_all() does not wait: each
+ *  pass uses a zero rcl_wait() timeout, and the loop ends when that wait finds nothing.
+ *  Call spin_some() with a timeout first when the caller wants to block for new data.
+ *
+ * <hr>
+ * Attribute          | Adherence
+ * ------------------ | -------------
+ * Allocates Memory   | No
+ * Thread-Safe        | No
+ * Uses Atomics       | No
+ * Lock-Free          | Yes
+ *
+ * \param [inout] executor pointer to initialized executor
+ * \param[in] max_duration_ns the longest time to keep executing, in nanoseconds, > 0
+ * \return `RCL_RET_OK` if executor has been spun successfully
+ * \return `RCL_RET_INVALID_ARGUMENT` if executor is a null pointer or max_duration_ns is 0
+ * \return `RCL_RET_ERROR` if an error occured
+ */
+RCLC_PUBLIC
+rcl_ret_t
+rclc_executor_spin_all(
+  rclc_executor_t * executor,
+  const uint64_t max_duration_ns);
+
+/**
  *  The spin function checks for new data at DDS queue as long as ros context is available.
  *  It calls {@link rclc_executor_spin_some()} as long as rcl_context_is_valid() returns true.
  *
